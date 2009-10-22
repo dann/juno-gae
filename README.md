@@ -4,7 +4,7 @@ Juno-GAE
 
 * Juno-GAE is a web framework that was designed to make development as fast
   as possible on Google App Engine.
-* It is forked off the [http://brianreily.com/project/juno][Juno] project by Brain Reily
+* It is forked off the Juno project by Brain Reily http://brianreily.com/project/juno
 * Homepage: [http://github.com/justinjas/juno-gae][homepage]
 * Repository: [http://github.com/justinjas/juno-gae][repo]
 
