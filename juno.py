@@ -6,18 +6,16 @@ import sys
 # Server imports
 import urlparse
 import cgi
+import logging
 
 class Juno(object):
     def __init__(self, configuration=None):
         """Takes an optional configuration dictionary. """
         global _hub
         if _hub is not None:
-            print >>sys.stderr, 'Warning: there is already a Juno object created;'
-            print >>sys.stderr, '         you might get some weird behavior.'
+            logging.error('Warning: there is already a Juno object created you might get some weird behavior.')
         else: _hub = self
         self.routes = []
-        # Find the directory of the user's app, so we can setup static/template_roots
-        self.find_user_path()
         # Set options and merge in user-set options
         self.config = {
                 # General settings / meta information
@@ -28,15 +26,10 @@ class Juno(object):
                 'charset':      'utf-8',
                 'content_type': 'text/html',
                 # Server options
-                'mode':     'dev',
+                'mode':     'appengine',
                 'scgi_port': 8000,
                 'fcgi_port': 8000,
                 'dev_port':  8000,
-                # Static file handling
-                'use_static':     True,
-                'static_url':     '/static/*:file/',
-                'static_root':    os.path.join(self.app_path, 'static/'),
-                'static_handler': static_serve,
                 # Template options
                 'use_templates':           True,
                 'template_lib':            'jinja2',
@@ -45,14 +38,11 @@ class Juno(object):
                 'auto_reload_templates':   True,
                 'translations':            [], 
                 'template_kwargs':         {},
-                'template_root':           os.path.join(self.app_path, 'templates/'),
+                'template_root':           os.path.join(os.path.abspath(os.path.dirname(__file__)), 'templates/'),
                 '404_template':            '404.html',
                 '500_template':            '500.html',
                 # Database options
                 'use_db':      True,
-                'db_type':     'sqlite',
-                'db_location': ':memory:',
-                'db_models':   {},
                 # Session options
                 'use_sessions': False,
                 'session_lib':  'beaker',
@@ -63,43 +53,12 @@ class Juno(object):
                 'middleware': []
         }
         if configuration is not None: self.config.update(configuration)
-        # Set up the static file handler
-        if self.config['use_static']: 
-            self.setup_static()
         # Set up templating
         if self.config['use_templates']: 
             self.setup_templates()
         # Set up the database 
         if self.config['use_db']:
             self.setup_database()
-
-    def find_user_path(self):
-        # This section may look strange, but it seems like the only solution.
-        # Basically, we need the directory of the user's app in order to setup
-        # the static/template_roots.  When we run under mod_wsgi, we can't use
-        # either os.getcwd() or sys.path[0].  This code generates an exception,
-        # then goes up to the top stack frame (the user's code), and finds
-        # the location of that.
-        try:
-            raise Exception
-        except:
-            traceback = sys.exc_info()[2]
-            if traceback is None:
-                print >>sys.stderr, 'Warning: Failed to find current working directory.'
-                print >>sys.stderr, '         Default static_root and template_root'
-                print >>sys.stderr, '         values may not work correctly.'
-                filename = './'
-            else:
-                frame = traceback.tb_frame
-                while traceback is not None:
-                    if frame.f_back is None:
-                        break
-                    frame = frame.f_back
-                filename = frame.f_code.co_filename
-        self.app_path = os.path.abspath(os.path.dirname(filename))
-
-    def setup_static(self):
-        self.route(self.config['static_url'], self.config['static_handler'], '*')
 
     def setup_templates(self):
         if self.config['template_lib'] == 'jinja2':
@@ -132,54 +91,16 @@ class Juno(object):
 
     def setup_database(self):
         # DB library imports
-        from sqlalchemy import (create_engine, Table, MetaData, Column, Integer, 
-                                String, Unicode, Text, UnicodeText, Date, Numeric, 
-                                Time, Float, DateTime, Interval, Binary, Boolean, 
-                                PickleType)
-        from sqlalchemy.orm import sessionmaker, mapper
-        # Create global name mappings for model()
-        global column_mapping
-        column_mapping = {'string': String,       'str': String,
-                         'integer': Integer,      'int': Integer, 
-                         'unicode': Unicode,     'text': Text,
-                     'unicodetext': UnicodeText, 'date': Date,
-                         'numeric': Numeric,     'time': Time,
-                           'float': Float,   'datetime': DateTime,
-                        'interval': Interval,  'binary': Binary,
-                         'boolean': Boolean,     'bool': Boolean,
-                      'pickletype': PickleType,
-        }
-        # Add a few SQLAlchemy types to globals() so we can use them in models
-        globals().update({'Column': Column, 'Table': Table, 'Integer': Integer,
-                          'MetaData': MetaData, 'mapper': mapper})
-        # Ensures correct slash number for sqlite
-        if self.config['db_type'] == 'sqlite':
-            self.config['db_location'] = '/' + self.config['db_location']
-        eng_name = self.config['db_type'] + '://' + self.config['db_location']
-        self.config['db_engine'] = create_engine(eng_name)
-        self.config['db_session'] = sessionmaker(bind=self.config['db_engine'])()
+        from google.appengine.ext import db
 
-    def run(self, mode=None):
-        """Runs the Juno hub, in the set mode (default now is dev). """
-        # If no mode is specified, use the one from the config
-        if mode is None: mode = config('mode')
-        # Otherwise store the specified mode
-        else: config('mode', mode)
-        
-        if   mode == 'dev':  run_dev('',  config('dev_port'),  self.request)
-        elif mode == 'scgi': run_scgi('', config('scgi_port'), self.request)
-        elif mode == 'fcgi': run_fcgi('', config('fcgi_port'), self.request)
-        elif mode == 'wsgi': return run_wsgi(self.request)
-        elif mode == 'appengine': run_appengine(self.request)
-        else:
-            print >>sys.stderr, 'Error: unrecognized mode'
-            print >>sys.stderr, '       exiting juno...'
+    def run(self):
+        run_appengine(self.request)
 
     def request(self, request, method='*', **kwargs):
         """Called when a request is received.  Routes a url to its view.
         Returns a 3-tuple (status_string, headers, body) from 
         JunoResponse.render()."""
-        if config('log'): print '%s request for %s...' %(method, request)
+        if config('log'): logging.info('%s request for %s...' %(method, request))
         req_obj = JunoRequest(kwargs)
         # Set the global response object in case the view wants to use it
         global _response
@@ -188,8 +109,8 @@ class Juno(object):
         if request[-1] != '/': request += '/'
         for route in self.routes:
             if not route.match(request, method): continue
-            if config('log'): print '%s matches, calling %s()...\n' %(
-                route.old_url, route.func.__name__)
+            if config('log'): logging.info('%s matches, calling %s()...\n' %(
+                route.old_url, route.func.__name__))
             # Get the return from the view    
             if config('raise_view_exceptions') or config('use_debugger'):
                 response = route.dispatch(req_obj)
@@ -316,9 +237,7 @@ class JunoRequest(object):
         # Try returning values from self.raw
         if attr in self.keys(): return self.raw[attr]
         if attr == 'session' and config('log'):
-            print >>sys.stderr, "Error: To use sessions, enable 'use_sessions'"
-            print >>sys.stderr, "       when calling juno.init()"
-            print >>sys.stderr, ""
+             logging.error("Error: To use sessions, enable 'use_sessions' when calling juno.init()")
         return None
 
     def input(self, arg=None):
@@ -428,13 +347,10 @@ def config(key, value=None):
     # Or set a specific value
     else: _hub.config[key] = value
 
-def run(mode=None):
-    """Start Juno, with an optional mode argument."""
+def run():
+    """Start Juno"""
     if _hub is None: init()
-    if len(sys.argv) > 1:
-        if '-mode=' in sys.argv[1]: mode = sys.argv[1].split('=')[1]
-        elif '-mode' == sys.argv[1]: mode = sys.argv[2]
-    return _hub.run(mode)
+    return _hub.run()
 
 #
 #   Decorators to add routes based on request methods
@@ -492,14 +408,14 @@ def assign(from_, to):
 
 def notfound(error='Unspecified error', file=None):
     """Sets the response to a 404, sets the body to 404_template."""
-    if config('log'): print >>sys.stderr, 'Not Found: %s' % error
+    if config('log'):  logging.error('Not Found: %s' % error);
     status(404)
     if file is None: file = config('404_template')
     return template(file, error=error)
 
 def servererror(error='Unspecified error', file=None):
     """Sets the response to a 500, sets the body to 500_template."""
-    if config('log'): print >>sys.stderr, 'Error: (%s, %s, %s)' % sys.exc_info()
+    if config('log'): logging.error('Error: (%s, %s, %s)' % sys.exc_info())
     status(500)
     if file is None: file = config('500_template')
     # Resets the response, in case the error occurred as we added data to it
@@ -591,84 +507,6 @@ def autotemplate(urls, template_path):
         def temp(web): template(template_path)
 
 ####
-#   Data modeling functions
-####
-
-class JunoClassConstructor(type):
-    def __new__(cls, name, bases, dct):
-        return type.__new__(cls, name, bases, dct)
-    def __init__(cls, name, bases, dct):
-        super(JunoClassConstructor, cls).__init__(name, bases, dct)
-
-# Map SQLAlchemy's types to string versions of them for convenience
-column_mapping = {} # Constructed in Juno.setup_database
-
-session = lambda: config('db_session')
-
-def model(model_name, **kwargs):
-    if not _hub: init()
-    # Functions for the class
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items(): 
-            self.__dict__[k] = v
-    def add(self): 
-        session().add(self)
-        return self
-    def save(self):
-        s = session()
-        if self not in s: s.add(self)
-        s.commit()
-        return self
-    def __repr__(self): 
-        return '<%s: id = %s>' %(self.__name__, self.id)
-    def __str__(self):
-        return '<%s: id = %s>' %(self.__name__, self.id)
-    # Some static functions for the class
-    def find_func(cls):
-        return session().query(cls)
-    # Build the class's __dict__
-    cls_dict = {'__init__': __init__,
-                'add':      add,
-                'save':     save,
-                '__name__': model_name,
-                '__repr__': __repr__,
-                '__str__':  __str__,
-                'find':     None,       # Defined later
-               }
-    # Parse kwargs to get column definitions
-    cols = [ Column('id', Integer, primary_key=True), ]
-    for k, v in kwargs.items():
-        if callable(v):
-            cls_dict[k] = v
-        elif isinstance(v, Column):
-            if not v.name: v.name = k
-            cols.append(v)
-        elif type(v) == str:
-            v = v.lower()
-            if v in column_mapping: v = column_mapping[v]
-            else: raise NameError("'%s' is not an allowed database column" %v)
-            cols.append(Column(k, v))
-    # Create the class    
-    tmp = JunoClassConstructor(model_name, (object,), cls_dict)
-    # Add the functions that need an instance of the class
-    tmp.find = staticmethod(lambda: find_func(tmp))
-    # Create the table
-    metadata = MetaData()
-    tmp_table = Table(model_name + 's', metadata, *cols)
-    metadata.create_all(config('db_engine'))
-    # Map the table to the created class
-    mapper(tmp, tmp_table)
-    # Track the class
-    config('db_models')[model_name] = tmp
-    return tmp
-
-def find(model_cls):
-    if isinstance(mode_cls, str):
-        try: model_cls = config('db_models')[model_cls]
-        except: raise NameError("No such model exists ('%s')" %model_cls)
-    return session().query(model_cls)
-
-####
 #   Juno's Servers - Development (using WSGI), and SCGI (using Flup)
 ####
 
@@ -678,8 +516,7 @@ def get_application(process_func):
         # the `environ` was None.  Seems to have stopped, but I don't
         # know why.  This message was to clarify what happened.
         if environ is None:
-            print >>sys.stderr, 'Error: environ is None for some reason.'
-            print >>sys.stderr, 'Error: environ=%s' %environ
+            logging.error('Error: environ is None for some reason. Error: environ=%s' %environ)
             sys.exit()
         # Ensure some variable exist (WSGI doesn't guarantee them)
         if 'PATH_INFO' not in environ.keys() or not environ['PATH_INFO']: 
@@ -745,38 +582,10 @@ def _load_middleware(application, middleware_list):
             obj = getattr(__import__(module, None, None, [name]), name)
             application = obj(application, **args)
         except (ImportError, AttributeError):
-            print 'Warning: failed to load middleware %s' % name
+            logging.warning('failed to load middleware %s' % name)
     return application
 
-def run_dev(addr, port, process_func):
-    from wsgiref.simple_server import make_server
-    app = get_application(process_func)
-    print ''
-    print 'running Juno development server, <C-c> to exit...'
-    print 'connect to 127.0.0.1:%s to use your app...' %port
-    print ''
-    srv = make_server(addr, port, app)
-    try:
-        srv.serve_forever()
-    except:
-        print 'interrupted; exiting juno...'
-        srv.socket.close()
-
-def run_scgi(addr, port, process_func):
-    from flup.server.scgi_fork import WSGIServer as SCGI
-    app = get_application(process_func)
-    SCGI(application=app, bindAddress=(addr, port)).run()
-
-def run_fcgi(addr, port, process_func):
-    from flup.server.fcgi import WSGIServer as FCGI
-    app = get_application(process_func)
-    FCGI(app, bindAddress=(addr, port)).run()
-
-def run_wsgi(process_func):
-    sys.stdout = sys.stderr
-    return get_application(process_func)
-
 def run_appengine(process_func):
-    sys.stdout = sys.stderr
+    #sys.stdout = sys.stderr
     from google.appengine.ext.webapp.util import run_wsgi_app
     run_wsgi_app(get_application(process_func))

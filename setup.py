@@ -2,16 +2,6 @@ from distutils.core import setup
 import sys
 
 try:
-    import sqlalchemy
-except:
-    print ''
-    print "** SQLAlchemy is recommended, and required for Juno\'s database access"
-    print '** Download from: http://sqlalchemy.org/download.html'
-    print '** Or run: `easy_install SQLAlchemy`'
-    print '** If you\'re not going to be using a database, ignore this.'
-    print ''
-
-try:
     import flup
 except:
     print ''
@@ -55,13 +45,13 @@ except:
     print '** If you\'re not going to use the debugger, ignore this message.'
     print ''
 
-setup(name         = 'Juno',
-      description  = 'A lightweight Python web framework',
-      author       = 'Brian Reily',
-      author_email = 'brian@brianreily.com',
-      url          = 'http://brianreily.com/project/juno/',
+setup(name         = 'Juno-GAE',
+      description  = 'A lightweight Python web framework for Google App Engine',
+      author       = 'Justin Sanders',
+      author_email = 'justin@justinjas.com',
+      url          = 'http://github.com/justinjas/juno-gae',
       version      = '0.1.2',
-      py_modules   = ['juno'],
+      py_modules   = ['juno-gae'],
       classifiers  = [
         'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
